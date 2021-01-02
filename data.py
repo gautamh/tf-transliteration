@@ -91,7 +91,11 @@ def create_dataset(data_file, char_vocab, num_ep=3, force_create=False, maxlen=5
                 if i % 10000 == 0:
                     tf.logging.info('Read %d lines', i)
                 if '\t' in line:
-                    s, t = line.strip().lower().split('\t')
+                    try:
+                        s, t = line.strip().lower().split('\t')
+                    except ValueError as e:
+                        tf.logging.warning('ValueError:')
+                        tf.logging.warning(line)
                 else:
                     s = line.strip().lower()
                     t = ''

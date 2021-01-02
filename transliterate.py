@@ -8,6 +8,7 @@ import numpy as np
 import os, sys, io, re
 import six
 
+from functools import reduce
 from data import create_vocab, load_vocab
 from data import split_text_file, SPECIALS
 from data import create_dataset, make_data_iter_fn
@@ -38,9 +39,9 @@ def decode_hparams(vocab_size, overrides=""):
     hp = tf.contrib.training.HParams(
         batch_size=32,
         embedding_size=64,
-        char_vocab_size=vocab_size + 1, #Blank label for CTC loss
+        char_vocab_size=vocab_size + 2, #Blank label for CTC loss
         hidden_size=128,
-        learn_rate=0.0008
+        learn_rate=0.0002
     )
     return hp.parse(overrides)
 
@@ -78,8 +79,8 @@ def create_model():
 
             input_emb = tf.nn.embedding_lookup(embeddings, inputs)
 
-        cell_fw = tf.nn.rnn_cell.BasicLSTMCell(hparams.hidden_size//2)
-        cell_bw = tf.nn.rnn_cell.BasicLSTMCell(hparams.hidden_size//2)
+        cell_fw = tf.nn.rnn_cell.BasicLSTMCell(hparams.hidden_size)
+        cell_bw = tf.nn.rnn_cell.BasicLSTMCell(hparams.hidden_size)
 
 
         with tf.variable_scope('encoder'):
@@ -100,6 +101,19 @@ def create_model():
         train_op = None
         predictions = None
 
+        def _add_empty_cols(t, max_shape, constant_values):
+            s = tf.shape(t)
+            shape_diff = tf.math.subtract(max_shape, s)
+            return tf.cond(
+                tf.reduce_all(
+                    tf.math.equal(s, max_shape)),
+                    # if the tensor is the same shape as the largest tensor, don't do anything
+                    lambda: t,
+                    # if it's not the same shape, we assume it has the same number of rows
+                    # and we add as many 0-filled columns as needed to make it the same
+                    # number of years.
+                    lambda: tf.concat([t, tf.fill((max_shape[0], shape_diff[1]), 0)], axis=1))
+
         if mode == tf.estimator.ModeKeys.TRAIN:
             loss = tf.nn.ctc_loss(labels, logits, input_lengths)
             loss = tf.reduce_mean(loss)
@@ -116,9 +130,11 @@ def create_model():
             }
 
         elif mode == tf.estimator.ModeKeys.PREDICT:
-            predictions, _ = tf.nn.ctc_greedy_decoder(logits, input_lengths)
-            predictions = tf.sparse_tensor_to_dense(tf.cast(predictions[0], tf.int32))
-            predictions = {'decoded': predictions}
+            predictions, _ = tf.nn.ctc_beam_search_decoder(logits, input_lengths, 100, 4)
+            predictions = [tf.sparse_tensor_to_dense(tf.cast(prediction, tf.int32)) for prediction in predictions]
+            max_shape = reduce((lambda a, b: tf.math.maximum(a, b)), [tf.shape(prediction) for prediction in predictions])
+            predictions = [_add_empty_cols(prediction, max_shape, 0) for prediction in predictions]
+            predictions = {'decoded': tf.stack(predictions)}
 
         return tf.estimator.EstimatorSpec(
                     mode,
@@ -212,16 +228,17 @@ def predict():
 
     count = 0
     with io.open(decode_output_file, 'w', encoding='utf-8') as fp:
-        for pred in y:
-            decoded = pred['decoded']
-            if len(decoded.shape) == 1:
-                decoded = decoded.reshape(1, -1)
-
-            for r in range(decoded.shape[0]):
-                fp.write(''.join([rev_vocab[i] for i in decoded[r, :] if i not in ignore_ids]) + '\n')
+        decodeds = [pred['decoded'] for pred in y]
+        for translit_set in list(zip(*decodeds)):
+            for translit in translit_set:
+                fp.write(_convert_pred_to_str(translit, rev_vocab, ignore_ids) + ',')
                 count += 1
                 if count % 10000 == 0:
                     tf.logging.info('Decoded %d lines', count)
+            fp.write('\n')
+
+def _convert_pred_to_str(pred, rev_vocab, ignore_ids):
+    return ''.join([rev_vocab[i] for i in pred if i not in ignore_ids])
 
 def main(unused_argv):
     if FLAGS.decode_input_file:
