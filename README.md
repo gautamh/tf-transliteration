@@ -2,7 +2,7 @@
 TensorFlow implementation of the Google Transliteration model in the paper [Sequence-to-sequence neural network models for transliteration](https://arxiv.org/abs/1610.09565). Specifically it implements the BiLSTM-CTC model using Epsilon Insertion.
 
 ### Usage
-For the code to run you need Python 3.5+ and Tensorflow 1.5+
+For the code to run you need Python 3.5+ and Tensorflow 2.0+
 
 **Training:**
 The dataset must be provided as tab separated files. You can get an English-to-Hindi transliteration dataset [here](http://cse.iitkgp.ac.in/resgrp/cnerg/qa/fire13translit/Hindi%20-%20Word%20Transliteration%20Pairs%201.txt)
